@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: #e6e6e6;
+  }
+  #board{ display:block; touch-action: manipulation; background:#d7a559; border-radius:8px }
+  #gameContainer{ display:flex;justify-content:center;align-items:center;padding:4px;margin:0;border-radius:12px;}
+</style>
+</head>
+<body>
+<div id="gameContainer">
+  <canvas id="board"></canvas>
+</div>
+<script>
+(function(){
+  const params = new URLSearchParams(window.location.search);
+  let size = parseInt(params.get("size") || "19", 10);
+  if(isNaN(size) || size<5 || size>51) size=19;
+
+  const canvas = document.getElementById("board");
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  const gameContainer = document.getElementById("gameContainer");
+
+  let board = Array.from({length:size},()=>Array(size).fill(null));
+  let current = "black";
+  let captures = {black:0, white:0};
+  let lastBoardHash = null;
+
+  function hashBoard(b){ return b.map(r=>r.map(c=>c?c[0]:'_').join('')).join('|'); }
+
+  function updateHUD(){
+    const currentIsBlack = current === "black";
+    gameContainer.style.background = currentIsBlack ? "#000" : "#fff";
+  }
+
+  function resize(){
+    const portrait = window.innerHeight >= window.innerWidth;
+    let sizePx = portrait ? Math.floor(window.innerWidth*0.98) : Math.floor(window.innerHeight*0.98);
+    sizePx = Math.max(200,sizePx);
+    canvas.style.width = sizePx+'px';
+    canvas.style.height = sizePx+'px';
+    canvas.width = sizePx;
+    canvas.height = sizePx;
+    drawAll();
+  }
+
+  function drawBoard(){
+    const w = canvas.width;
+    ctx.clearRect(0,0,w,w);
+    ctx.fillStyle = "#d7a559";
+    ctx.fillRect(0,0,w,w);
+    const gs = w/(size+1);
+    ctx.strokeStyle="#000";
+    ctx.lineWidth = Math.max(1,Math.round(gs*0.03));
+    for(let i=1;i<=size;i++){
+      ctx.beginPath(); ctx.moveTo(gs,gs*i); ctx.lineTo(gs*size,gs*i); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(gs*i,gs); ctx.lineTo(gs*i,gs*size); ctx.stroke();
+    }
+    const starR = Math.max(2,gs*0.12);
+    let stars=[];
+    if(size===19) stars=[3,9,15];
+    else if(size===13) stars=[3,6,9];
+    else if(size===9) stars=[2,4,6];
+    ctx.fillStyle="#000";
+    for(const r of stars){ for(const c of stars){ ctx.beginPath(); ctx.arc((c+1)*gs,(r+1)*gs,starR,0,Math.PI*2); ctx.fill(); } }
+  }
+
+  const stoneRadiusFactor=0.4;
+  function drawStones(){
+    const gs = canvas.width/(size+1);
+    for(let r=0;r<size;r++){
+      for(let c=0;c<size;c++){
+        const s=board[r][c]; if(!s) continue;
+        const x=(c+1)*gs, y=(r+1)*gs;
+        const rad=Math.max(4,gs*stoneRadiusFactor);
+        ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2);
+        if(s==='black'){
+          const grad = ctx.createRadialGradient(x-rad*0.3, y-rad*0.3, rad*0.1, x, y, rad);
+          grad.addColorStop(0,'#555');
+          grad.addColorStop(0.5,'#000');
+          grad.addColorStop(1,'#000');
+          ctx.fillStyle=grad;
+          ctx.fill();
+        } else {
+          const grad = ctx.createRadialGradient(x-rad*0.3, y-rad*0.3, rad*0.1, x, y, rad);
+          grad.addColorStop(0,'#fff');
+          grad.addColorStop(0.5,'#eee');
+          grad.addColorStop(1,'#ddd');
+          ctx.fillStyle=grad;
+          ctx.fill();
+        }
+      }
+    }
+  }
+
+  function drawDifference(){
+    const diff = captures.white - captures.black;
+    if(diff===0) return;
+    const text=(diff>0?'+':'')+diff;
+    const w=canvas.width;
+    const fontSize=Math.floor(w*0.42);
+    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font=`700 ${fontSize}px sans-serif`;
+    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillText(text,w/2,w/2);
+    ctx.lineWidth=Math.max(2,Math.round(fontSize*0.02)); ctx.strokeStyle='rgba(0,0,0,0.18)'; ctx.strokeText(text,w/2,w/2);
+    ctx.restore();
+  }
+
+  function drawAll(){ drawBoard(); drawStones(); drawDifference(); }
+  function getNeighbors(r,c){ const out=[]; if(r>0) out.push([r-1,c]); if(r<size-1) out.push([r+1,c]); if(c>0) out.push([r,c-1]); if(c<size-1) out.push([r,c+1]); return out; }
+  function findGroup(r,c,visited=new Set()){ const color=board[r][c]; const key=r+","+c; if(visited.has(key)) return {stones:[],liberties:0}; visited.add(key); let stonesArr=[[r,c]]; let liberties=0; for(const [rr,cc] of getNeighbors(r,c)){ if(board[rr][cc]===null){liberties++;} else if(board[rr][cc]===color){ const g=findGroup(rr,cc,visited); stonesArr=stonesArr.concat(g.stones); liberties+=g.liberties; } } return {stones:stonesArr,liberties}; }
+  function removeGroup(group){ for(const [r,c] of group){ board[r][c]=null; } }
+
+  canvas.addEventListener('click',e=>{
+    const rect=canvas.getBoundingClientRect();
+    const x=e.clientX-rect.left, y=e.clientY-rect.top;
+    const gs=canvas.width/(size+1);
+    let c=Math.round(x/gs)-1, r=Math.round(y/gs)-1;
+    if(r<0||r>=size||c<0||c>=size) return;
+    if(board[r][c]!==null) return;
+    const boardCopy=board.map(row=>row.slice());
+    const prevHash=hashBoard(boardCopy);
+    board[r][c]=current;
+    const opponent=current==='black'?'white':'black';
+    let totalCaptured=0;
+    for(const [rr,cc] of getNeighbors(r,c)){ if(board[rr][cc]===opponent){ const g=findGroup(rr,cc); if(g.liberties===0){ removeGroup(g.stones); totalCaptured+=g.stones.length; } } }
+    const selfG=findGroup(r,c); if(selfG.liberties===0){ board=boardCopy; return; }
+    const newHash=hashBoard(board); if(newHash===lastBoardHash){ board=boardCopy; return; }
+    captures[current]+=totalCaptured; lastBoardHash=prevHash; current=opponent;
+    updateHUD(); drawAll();
+  });
+
+  window.addEventListener('resize',resize);
+  resize(); updateHUD();
+})();
+</script>
+</body>
+</html>
