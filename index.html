@@ -1,148 +1,455 @@
 <!DOCTYPE html>
 <html lang="tr">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<style>
-  html, body {
-    margin: 0;
-    padding: 0;
-    height: 100%;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    background: #e6e6e6;
-  }
-  #board{ display:block; touch-action: manipulation; background:#d7a559; border-radius:8px }
-  #gameContainer{ display:flex;justify-content:center;align-items:center;padding:4px;margin:0;border-radius:12px;}
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #e6e6e6;
+    }
+
+    #gameContainer {
+      overflow: hidden;
+    }
+
+    #board {
+      display: block;
+      touch-action: manipulation;
+      background: #d7a559;
+      border-radius: 8px;
+    }
+  </style>
+  <link
+    rel="manifest"
+    href="data:application/manifest+json,{%22name%22:%22Go%20Game%22,%22short_name%22:%22Go%22,%22start_url%22:%22.%22,%22display%22:%22standalone%22,%22background_color%22:%22%23000000%22,%22theme_color%22:%22%23000000%22}"
+  >
 </head>
 <body>
-<div id="gameContainer">
-  <canvas id="board"></canvas>
-</div>
-<script>
-(function(){
-  const params = new URLSearchParams(window.location.search);
-  let size = parseInt(params.get("size") || "19", 10);
-  if(isNaN(size) || size<5 || size>51) size=19;
+  <div id="gameContainer">
+    <canvas id="board"></canvas>
+  </div>
 
-  const canvas = document.getElementById("board");
-  const ctx = canvas.getContext("2d");
-  ctx.imageSmoothingEnabled = false;
-  const gameContainer = document.getElementById("gameContainer");
+  <script>
+    (() => {
+      const STAR_POINTS = {
+        19: [3, 9, 15],
+        13: [3, 6, 9],
+        9: [2, 4, 6]
+      };
 
-  let board = Array.from({length:size},()=>Array(size).fill(null));
-  let current = "black";
-  let captures = {black:0, white:0};
-  let lastBoardHash = null;
+      const STONE_RADIUS_FACTOR = 0.4;
+      const DEFAULT_SIZE = 19;
+      const POSITION_PARAM = "position";
+      const TURN_PARAM = "turn";
+      const MIN_SIZE = 5;
+      const MAX_SIZE = 25;
+      const MIN_BOARD_PX = 200;
 
-  function hashBoard(b){ return b.map(r=>r.map(c=>c?c[0]:'_').join('')).join('|'); }
+      const canvas = document.getElementById("board");
+      const ctx = canvas.getContext("2d");
+      const gameContainer = document.getElementById("gameContainer");
 
-  function updateHUD(){
-    const currentIsBlack = current === "black";
-    gameContainer.style.background = currentIsBlack ? "#000" : "#fff";
-  }
+      const state = createInitialState(getBoardSizeFromUrl());
+      const view = {
+        boardPx: 0,
+        dpr: window.devicePixelRatio || 1
+      };
 
-  function resize(){
-    const portrait = window.innerHeight >= window.innerWidth;
-    let sizePx = portrait ? Math.floor(window.innerWidth*0.98) : Math.floor(window.innerHeight*0.98);
-    sizePx = Math.max(200,sizePx);
-    canvas.style.width = sizePx+'px';
-    canvas.style.height = sizePx+'px';
-    canvas.width = sizePx;
-    canvas.height = sizePx;
-    drawAll();
-  }
+      ctx.imageSmoothingEnabled = false;
 
-  function drawBoard(){
-    const w = canvas.width;
-    ctx.clearRect(0,0,w,w);
-    ctx.fillStyle = "#d7a559";
-    ctx.fillRect(0,0,w,w);
-    const gs = w/(size+1);
-    ctx.strokeStyle="#000";
-    ctx.lineWidth = Math.max(1,Math.round(gs*0.03));
-    for(let i=1;i<=size;i++){
-      ctx.beginPath(); ctx.moveTo(gs,gs*i); ctx.lineTo(gs*size,gs*i); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(gs*i,gs); ctx.lineTo(gs*i,gs*size); ctx.stroke();
-    }
-    const starR = Math.max(2,gs*0.12);
-    let stars=[];
-    if(size===19) stars=[3,9,15];
-    else if(size===13) stars=[3,6,9];
-    else if(size===9) stars=[2,4,6];
-    ctx.fillStyle="#000";
-    for(const r of stars){ for(const c of stars){ ctx.beginPath(); ctx.arc((c+1)*gs,(r+1)*gs,starR,0,Math.PI*2); ctx.fill(); } }
-  }
+      function normalizeBoardSize(value) {
+        const parsed = parseInt(value, 10);
+        return !Number.isNaN(parsed) && parsed >= MIN_SIZE && parsed <= MAX_SIZE
+          ? parsed
+          : DEFAULT_SIZE;
+      }
 
-  const stoneRadiusFactor=0.4;
-  function drawStones(){
-    const gs = canvas.width/(size+1);
-    for(let r=0;r<size;r++){
-      for(let c=0;c<size;c++){
-        const s=board[r][c]; if(!s) continue;
-        const x=(c+1)*gs, y=(r+1)*gs;
-        const rad=Math.max(4,gs*stoneRadiusFactor);
-        ctx.beginPath(); ctx.arc(x,y,rad,0,Math.PI*2);
-        if(s==='black'){
-          const grad = ctx.createRadialGradient(x-rad*0.3, y-rad*0.3, rad*0.1, x, y, rad);
-          grad.addColorStop(0,'#555');
-          grad.addColorStop(0.5,'#000');
-          grad.addColorStop(1,'#000');
-          ctx.fillStyle=grad;
-          ctx.fill();
-        } else {
-          const grad = ctx.createRadialGradient(x-rad*0.3, y-rad*0.3, rad*0.1, x, y, rad);
-          grad.addColorStop(0,'#fff');
-          grad.addColorStop(0.5,'#eee');
-          grad.addColorStop(1,'#ddd');
-          ctx.fillStyle=grad;
-          ctx.fill();
+      function getBoardSizeFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return normalizeBoardSize(params.get("size") || String(DEFAULT_SIZE));
+      }
+
+      function ensureUrlDefaults() {
+        const params = new URLSearchParams(window.location.search);
+        const normalizedSize = normalizeBoardSize(params.get("size") || String(DEFAULT_SIZE));
+        const normalizedTurn = parseTurn(params.get(TURN_PARAM));
+
+        let changed = false;
+
+        if (params.get("size") !== String(normalizedSize)) {
+          params.set("size", String(normalizedSize));
+          changed = true;
+        }
+
+        if (params.get(TURN_PARAM) !== normalizedTurn) {
+          params.set(TURN_PARAM, normalizedTurn);
+          changed = true;
+        }
+
+        if (changed) {
+          const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+          window.history.replaceState(null, "", nextUrl);
         }
       }
-    }
-  }
 
-  function drawDifference(){
-    const diff = captures.white - captures.black;
-    if(diff===0) return;
-    const text=(diff>0?'+':'')+diff;
-    const w=canvas.width;
-    const fontSize=Math.floor(w*0.42);
-    ctx.save(); ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.font=`700 ${fontSize}px sans-serif`;
-    ctx.fillStyle='rgba(0,0,0,0.12)'; ctx.fillText(text,w/2,w/2);
-    ctx.lineWidth=Math.max(2,Math.round(fontSize*0.02)); ctx.strokeStyle='rgba(0,0,0,0.18)'; ctx.strokeText(text,w/2,w/2);
-    ctx.restore();
-  }
+      function parsePosition(positionText, size) {
+        if (!positionText) return createBoard(size);
 
-  function drawAll(){ drawBoard(); drawStones(); drawDifference(); }
-  function getNeighbors(r,c){ const out=[]; if(r>0) out.push([r-1,c]); if(r<size-1) out.push([r+1,c]); if(c>0) out.push([r,c-1]); if(c<size-1) out.push([r,c+1]); return out; }
-  function findGroup(r,c,visited=new Set()){ const color=board[r][c]; const key=r+","+c; if(visited.has(key)) return {stones:[],liberties:0}; visited.add(key); let stonesArr=[[r,c]]; let liberties=0; for(const [rr,cc] of getNeighbors(r,c)){ if(board[rr][cc]===null){liberties++;} else if(board[rr][cc]===color){ const g=findGroup(rr,cc,visited); stonesArr=stonesArr.concat(g.stones); liberties+=g.liberties; } } return {stones:stonesArr,liberties}; }
-  function removeGroup(group){ for(const [r,c] of group){ board[r][c]=null; } }
+        const rows = positionText.trim().split("/");
+        if (rows.length !== size) return createBoard(size);
 
-  canvas.addEventListener('click',e=>{
-    const rect=canvas.getBoundingClientRect();
-    const x=e.clientX-rect.left, y=e.clientY-rect.top;
-    const gs=canvas.width/(size+1);
-    let c=Math.round(x/gs)-1, r=Math.round(y/gs)-1;
-    if(r<0||r>=size||c<0||c>=size) return;
-    if(board[r][c]!==null) return;
-    const boardCopy=board.map(row=>row.slice());
-    const prevHash=hashBoard(boardCopy);
-    board[r][c]=current;
-    const opponent=current==='black'?'white':'black';
-    let totalCaptured=0;
-    for(const [rr,cc] of getNeighbors(r,c)){ if(board[rr][cc]===opponent){ const g=findGroup(rr,cc); if(g.liberties===0){ removeGroup(g.stones); totalCaptured+=g.stones.length; } } }
-    const selfG=findGroup(r,c); if(selfG.liberties===0){ board=boardCopy; return; }
-    const newHash=hashBoard(board); if(newHash===lastBoardHash){ board=boardCopy; return; }
-    captures[current]+=totalCaptured; lastBoardHash=prevHash; current=opponent;
-    updateHUD(); drawAll();
-  });
+        const board = createBoard(size);
 
-  window.addEventListener('resize',resize);
-  resize(); updateHUD();
-})();
-</script>
+        for (let row = 0; row < size; row++) {
+          const rowStr = rows[row];
+          let col = 0;
+
+          for (let i = 0; i < rowStr.length; i++) {
+            const ch = rowStr[i];
+
+            // number = consecutive empty cells
+            if (!isNaN(ch)) {
+              let numStr = ch;
+              while (i + 1 < rowStr.length && !isNaN(rowStr[i + 1])) {
+                numStr += rowStr[++i];
+              }
+
+              const count = parseInt(numStr, 10);
+              col += count;
+              continue;
+            }
+
+            if (col >= size) return createBoard(size);
+
+            if (ch === "b") board[row][col] = "black";
+            else if (ch === "w") board[row][col] = "white";
+            else return createBoard(size);
+
+            col++;
+          }
+
+          if (col !== size) return createBoard(size);
+        }
+
+        return board;
+      }
+
+      function getBoardFromUrl(size) {
+        const params = new URLSearchParams(window.location.search);
+        return parsePosition(params.get(POSITION_PARAM), size);
+      }
+
+      function parseTurn(turnValue) {
+        if (turnValue === "w") return "white";
+        return "black";
+      }
+
+      function getTurnFromUrl() {
+        const params = new URLSearchParams(window.location.search);
+        return parseTurn(params.get(TURN_PARAM));
+      }
+
+      function createBoard(size) {
+        return Array.from({ length: size }, () => Array(size).fill(null));
+      }
+
+      function createInitialState(size) {
+        return {
+          size,
+          board: getBoardFromUrl(size),
+          current: getTurnFromUrl(),
+          captures: { black: 0, white: 0 },
+          lastBoardHash: null
+        };
+      }
+
+      function getOpponent(color) {
+        return color === "black" ? "white" : "black";
+      }
+
+      function cloneBoard(board) {
+        return board.map(row => row.slice());
+      }
+
+      function hashBoard(board) {
+        return board
+          .map(row => row.map(cell => (cell ? cell[0] : "_")).join(""))
+          .join("|");
+      }
+
+      function getGridSize() {
+        return view.boardPx / (state.size + 1);
+      }
+
+      function getNeighbors(row, col) {
+        const neighbors = [];
+        const { size } = state;
+
+        if (row > 0) neighbors.push([row - 1, col]);
+        if (row < size - 1) neighbors.push([row + 1, col]);
+        if (col > 0) neighbors.push([row, col - 1]);
+        if (col < size - 1) neighbors.push([row, col + 1]);
+
+        return neighbors;
+      }
+
+      function findGroup(startRow, startCol, visited = new Set()) {
+        const color = state.board[startRow][startCol];
+        const key = `${startRow},${startCol}`;
+
+        if (visited.has(key)) {
+          return { stones: [], liberties: 0 };
+        }
+
+        visited.add(key);
+
+        let stones = [[startRow, startCol]];
+        let liberties = 0;
+
+        for (const [row, col] of getNeighbors(startRow, startCol)) {
+          const cell = state.board[row][col];
+
+          if (cell === null) {
+            liberties++;
+            continue;
+          }
+
+          if (cell === color) {
+            const group = findGroup(row, col, visited);
+            stones = stones.concat(group.stones);
+            liberties += group.liberties;
+          }
+        }
+
+        return { stones, liberties };
+      }
+
+      function removeGroup(group) {
+        for (const [row, col] of group) {
+          state.board[row][col] = null;
+        }
+      }
+
+      function updateHUD() {
+        gameContainer.style.background = state.current === "black" ? "#000" : "#fff";
+      }
+
+      function resizeBoard() {
+        const isPortrait = window.innerHeight >= window.innerWidth;
+        const baseSize = isPortrait ? window.innerWidth : window.innerHeight;
+
+        view.boardPx = Math.max(MIN_BOARD_PX, Math.floor(baseSize));
+
+        canvas.style.width = `${view.boardPx}px`;
+        canvas.style.height = `${view.boardPx}px`;
+        canvas.width = view.boardPx * view.dpr;
+        canvas.height = view.boardPx * view.dpr;
+
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.scale(view.dpr, view.dpr);
+
+        render();
+      }
+
+      function drawBoard() {
+        const gs = getGridSize();
+        const stars = STAR_POINTS[state.size] || [];
+        const starRadius = Math.max(2, gs * 0.12);
+
+        ctx.clearRect(0, 0, view.boardPx, view.boardPx);
+        ctx.fillStyle = "#d7a559";
+        ctx.fillRect(0, 0, view.boardPx, view.boardPx);
+
+        ctx.strokeStyle = "#000";
+        ctx.lineWidth = Math.max(1, Math.round(gs * 0.03));
+
+        for (let i = 1; i <= state.size; i++) {
+          ctx.beginPath();
+          ctx.moveTo(gs, gs * i);
+          ctx.lineTo(gs * state.size, gs * i);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(gs * i, gs);
+          ctx.lineTo(gs * i, gs * state.size);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#000";
+        for (const row of stars) {
+          for (const col of stars) {
+            ctx.beginPath();
+            ctx.arc((col + 1) * gs, (row + 1) * gs, starRadius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      }
+
+      function drawStone(x, y, radius, color) {
+        const gradient = ctx.createRadialGradient(
+          x - radius * 0.3,
+          y - radius * 0.3,
+          radius * 0.1,
+          x,
+          y,
+          radius
+        );
+
+        if (color === "black") {
+          gradient.addColorStop(0, "#555");
+          gradient.addColorStop(0.5, "#000");
+          gradient.addColorStop(1, "#000");
+        } else {
+          gradient.addColorStop(0, "#fff");
+          gradient.addColorStop(0.5, "#eee");
+          gradient.addColorStop(1, "#ddd");
+        }
+
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fillStyle = gradient;
+        ctx.fill();
+      }
+
+      function drawStones() {
+        const gs = getGridSize();
+        const radius = Math.max(4, gs * STONE_RADIUS_FACTOR);
+
+        for (let row = 0; row < state.size; row++) {
+          for (let col = 0; col < state.size; col++) {
+            const stone = state.board[row][col];
+            if (!stone) continue;
+
+            drawStone((col + 1) * gs, (row + 1) * gs, radius, stone);
+          }
+        }
+      }
+
+      function drawDifference() {
+        const diff = state.captures.white - state.captures.black;
+        if (diff === 0) return;
+
+        const text = `${diff > 0 ? "+" : ""}${diff}`;
+        const fontSize = Math.floor(canvas.width * 0.42);
+
+        ctx.save();
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.font = `700 ${fontSize}px sans-serif`;
+        ctx.fillStyle = "rgba(0,0,0,0.12)";
+        ctx.fillText(text, canvas.width / 2, canvas.width / 2);
+        ctx.lineWidth = Math.max(2, Math.round(fontSize * 0.02));
+        ctx.strokeStyle = "rgba(0,0,0,0.18)";
+        ctx.strokeText(text, canvas.width / 2, canvas.width / 2);
+        ctx.restore();
+      }
+
+      function render() {
+        drawBoard();
+        drawStones();
+        drawDifference();
+      }
+
+      function getBoardPosition(clientX, clientY) {
+        const rect = canvas.getBoundingClientRect();
+        const gs = getGridSize();
+
+        return {
+          row: Math.round((clientY - rect.top) / gs) - 1,
+          col: Math.round((clientX - rect.left) / gs) - 1
+        };
+      }
+
+      function isInsideBoard(row, col) {
+        return row >= 0 && row < state.size && col >= 0 && col < state.size;
+      }
+
+      function tryCaptureOpponents(row, col, opponent) {
+        let capturedCount = 0;
+
+        for (const [neighborRow, neighborCol] of getNeighbors(row, col)) {
+          if (state.board[neighborRow][neighborCol] !== opponent) continue;
+
+          const group = findGroup(neighborRow, neighborCol);
+          if (group.liberties === 0) {
+            removeGroup(group.stones);
+            capturedCount += group.stones.length;
+          }
+        }
+
+        return capturedCount;
+      }
+
+      function rollbackMove(previousBoard) {
+        state.board = previousBoard;
+      }
+
+      function commitMove(previousHash, capturedCount, nextPlayer) {
+        state.captures[state.current] += capturedCount;
+        state.lastBoardHash = previousHash;
+        state.current = nextPlayer;
+        updateHUD();
+        render();
+      }
+
+      function handleMove(row, col) {
+        if (!isInsideBoard(row, col)) return;
+        if (state.board[row][col] !== null) return;
+
+        const previousBoard = cloneBoard(state.board);
+        const previousHash = hashBoard(previousBoard);
+        const currentPlayer = state.current;
+        const opponent = getOpponent(currentPlayer);
+
+        state.board[row][col] = currentPlayer;
+
+        const capturedCount = tryCaptureOpponents(row, col, opponent);
+        const ownGroup = findGroup(row, col);
+
+        if (ownGroup.liberties === 0) {
+          rollbackMove(previousBoard);
+          return;
+        }
+
+        const newHash = hashBoard(state.board);
+        if (newHash === state.lastBoardHash) {
+          rollbackMove(previousBoard);
+          return;
+        }
+
+        commitMove(previousHash, capturedCount, opponent);
+      }
+
+      function onBoardClick(event) {
+        const { row, col } = getBoardPosition(event.clientX, event.clientY);
+        handleMove(row, col);
+      }
+
+      function bindEvents() {
+        canvas.addEventListener("click", onBoardClick);
+        window.addEventListener("resize", resizeBoard);
+      }
+
+      function registerServiceWorker() {
+        navigator.serviceWorker?.register("service-worker.js");
+      }
+
+      function init() {
+        ensureUrlDefaults();
+        bindEvents();
+        resizeBoard();
+        updateHUD();
+        registerServiceWorker();
+      }
+
+      init();
+    })();
+  </script>
 </body>
 </html>
