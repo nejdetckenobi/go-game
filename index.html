@@ -100,32 +100,32 @@
       }
 
       function encodePosition(board) {
-        return board
-          .map(row => {
-            let encoded = "";
-            let emptyCount = 0;
+        const encodedRows = board.map(row => {
+          let encoded = "";
+          let emptyCount = 0;
 
-            for (const cell of row) {
-              if (cell === null) {
-                emptyCount++;
-                continue;
-              }
-
-              if (emptyCount > 0) {
-                encoded += String(emptyCount);
-                emptyCount = 0;
-              }
-
-              encoded += cell === "black" ? "b" : "w";
+          for (const cell of row) {
+            if (cell === null) {
+              emptyCount++;
+              continue;
             }
 
             if (emptyCount > 0) {
               encoded += String(emptyCount);
+              emptyCount = 0;
             }
 
-            return encoded;
-          })
-          .join("|");
+            encoded += cell === "black" ? "b" : "w";
+          }
+
+          return encoded;
+        });
+
+        while (encodedRows.length > 0 && encodedRows[encodedRows.length - 1] === "") {
+          encodedRows.pop();
+        }
+
+        return encodedRows.join("|");
       }
 
       function syncUrlToState() {
@@ -144,21 +144,20 @@
       }
 
       function parsePosition(positionText, size) {
-        if (!positionText) return createBoard(size);
+        if (positionText == null) return createBoard(size);
 
         const rows = positionText.trim().split("|");
-        if (rows.length !== size) return createBoard(size);
+        if (rows.length > size) return createBoard(size);
 
         const board = createBoard(size);
 
-        for (let row = 0; row < size; row++) {
+        for (let row = 0; row < rows.length; row++) {
           const rowStr = rows[row];
           let col = 0;
 
           for (let i = 0; i < rowStr.length; i++) {
             const ch = rowStr[i];
 
-            // number = consecutive empty cells
             if (!isNaN(ch)) {
               let numStr = ch;
               while (i + 1 < rowStr.length && !isNaN(rowStr[i + 1])) {
@@ -166,7 +165,9 @@
               }
 
               const count = parseInt(numStr, 10);
+              if (count <= 0) return createBoard(size);
               col += count;
+              if (col > size) return createBoard(size);
               continue;
             }
 
@@ -178,8 +179,6 @@
 
             col++;
           }
-
-          if (col !== size) return createBoard(size);
         }
 
         return board;
