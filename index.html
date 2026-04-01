@@ -78,7 +78,7 @@
       function ensureUrlDefaults() {
         const params = new URLSearchParams(window.location.search);
         const normalizedSize = normalizeBoardSize(params.get("size") || String(DEFAULT_SIZE));
-        const normalizedTurn = parseTurn(params.get(TURN_PARAM));
+        const normalizedTurn = params.get(TURN_PARAM) === "w" ? "w" : "b";
 
         let changed = false;
 
@@ -93,9 +93,54 @@
         }
 
         if (changed) {
-          const nextUrl = `${window.location.pathname}?${params.toString()}${window.location.hash}`;
+          const query = params.toString();
+          const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
           window.history.replaceState(null, "", nextUrl);
         }
+      }
+
+      function encodePosition(board) {
+        return board
+          .map(row => {
+            let encoded = "";
+            let emptyCount = 0;
+
+            for (const cell of row) {
+              if (cell === null) {
+                emptyCount++;
+                continue;
+              }
+
+              if (emptyCount > 0) {
+                encoded += String(emptyCount);
+                emptyCount = 0;
+              }
+
+              encoded += cell === "black" ? "b" : "w";
+            }
+
+            if (emptyCount > 0) {
+              encoded += String(emptyCount);
+            }
+
+            return encoded;
+          })
+          .join("/");
+      }
+
+      function syncUrlToState() {
+        const params = new URLSearchParams(window.location.search);
+        const sizeValue = String(state.size);
+        const turnValue = state.current === "white" ? "w" : "b";
+        const positionValue = encodePosition(state.board);
+
+        params.set("size", sizeValue);
+        params.set(TURN_PARAM, turnValue);
+        params.set(POSITION_PARAM, positionValue);
+
+        const query = params.toString();
+        const nextUrl = `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`;
+        window.history.replaceState(null, "", nextUrl);
       }
 
       function parsePosition(positionText, size) {
@@ -396,6 +441,7 @@
         state.current = nextPlayer;
         updateHUD();
         render();
+        syncUrlToState();
       }
 
       function handleMove(row, col) {
@@ -445,6 +491,7 @@
         bindEvents();
         resizeBoard();
         updateHUD();
+        syncUrlToState();
         registerServiceWorker();
       }
 
