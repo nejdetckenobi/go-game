@@ -125,7 +125,7 @@
           encodedRows.pop();
         }
 
-        return encodedRows.join("|");
+        return encodedRows.join(".");
       }
 
       function syncUrlToState() {
@@ -146,7 +146,7 @@
       function parsePosition(positionText, size) {
         if (positionText == null) return createBoard(size);
 
-        const rows = positionText.trim().split("|");
+        const rows = positionText.trim().split(".");
         if (rows.length > size) return createBoard(size);
 
         const board = createBoard(size);
@@ -224,7 +224,7 @@
       function hashBoard(board) {
         return board
           .map(row => row.map(cell => (cell ? cell[0] : "_")).join(""))
-          .join("|");
+          .join(".");
       }
 
       function getGridSize() {
