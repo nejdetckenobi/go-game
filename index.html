@@ -125,7 +125,7 @@
 
             return encoded;
           })
-          .join("/");
+          .join("|");
       }
 
       function syncUrlToState() {
@@ -146,7 +146,7 @@
       function parsePosition(positionText, size) {
         if (!positionText) return createBoard(size);
 
-        const rows = positionText.trim().split("/");
+        const rows = positionText.trim().split("|");
         if (rows.length !== size) return createBoard(size);
 
         const board = createBoard(size);
